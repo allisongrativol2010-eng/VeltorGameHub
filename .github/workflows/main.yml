@@ -18,11 +18,13 @@ jobs:
       - name: Baixar arquivos do projeto
         uses: actions/checkout@v4
 
-      - name: Compilar para PS4 com OpenOrbis
-        uses: OpenOrbis/toolchain-action@main
-        with:
-          version: v0.5.1
-          command: make
+      - name: Preparar ferramenta OpenOrbis
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            openorbisofficial/toolchain:v0.5.1 \
+            make
 
       - name: Verificar se o PKG foi gerado
         run: |
