@@ -1,0 +1,37 @@
+
+name: Build VeltorGameHub PS4 PKG
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar arquivos do projeto
+        uses: actions/checkout@v4
+
+      - name: Compilar para PS4 com OpenOrbis
+        uses: OpenOrbis/toolchain-action@main
+        with:
+          version: v0.5.1
+          command: make
+
+      - name: Verificar se o PKG foi gerado
+        run: |
+          find . -type f -name "*.pkg" -print
+          test -n "$(find . -type f -name '*.pkg' -print -quit)"
+
+      - name: Disponibilizar PKG para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: VeltorGameHub-PS4-PKG
+          path: "**/*.pkg"
+          if-no-files-found: error
