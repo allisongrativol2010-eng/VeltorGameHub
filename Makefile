@@ -12,7 +12,7 @@ CXX          := clang++
 LD           := ld.lld
 CREATE_EBOOT := $(BIN)/create-eboot
 PKGTOOL      := $(BIN)/PkgTool.Core
-CREATE_GP4   := $(BIN)/create-gp4
+CREATE_GP4   := /tmp/create-gp4
 
 OBJ          := $(BUILD_DIR)/main.o
 ELF          := $(BUILD_DIR)/VeltorGameHub.elf
