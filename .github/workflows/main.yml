@@ -24,21 +24,22 @@ jobs:
           set -eu
           test -f Makefile
           test -f main.cpp
-          echo "Arquivos do projeto encontrados."
+          echo "Arquivos principais encontrados."
           find . -maxdepth 3 -type f -print | sort
 
-      - name: Preparar ferramentas OpenOrbis
+      - name: Compilar create-gp4 oficial
         run: |
           set -eu
           sudo apt-get update
           sudo apt-get install -y golang-go git
 
           git clone --depth 1 \
-            https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain.git \
-            /tmp/openorbis-src
+            https://github.com/OpenOrbis/create-gp4.git \
+            /tmp/create-gp4-src
 
-          cd /tmp/openorbis-src/src/tools/create-gp4
-          GOOS=linux GOARCH=amd64 go build -o /tmp/create-gp4
+          cd /tmp/create-gp4-src/cmd/create-gp4
+          GO111MODULE=auto GOOS=linux GOARCH=amd64 \
+            go build -o /tmp/create-gp4 .
 
           test -x /tmp/create-gp4
           /tmp/create-gp4 -h
@@ -46,6 +47,11 @@ jobs:
       - name: Compilar e gerar PKG
         run: |
           set -eu
+
+          test -f sce_sys/icon0.png || {
+            echo "ERRO: falta sce_sys/icon0.png no projeto."
+            exit 1
+          }
 
           docker run --rm \
             --user "$(id -u):$(id -g)" \
@@ -62,15 +68,15 @@ jobs:
               test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
               test -x /tmp/create-gp4
 
-              echo "=== Compilando projeto ==="
+              echo "=== Gerando pacote ==="
               make
 
-              echo "=== Conferindo pacote ==="
-              find /workspace -type f -name "*.pkg" -print
-              test -n "$(find /workspace -type f -name "*.pkg" -print -quit)"
+              echo "=== Conferindo arquivo PKG ==="
+              find /workspace -maxdepth 1 -type f -name "*.pkg" -print
+              test -n "$(find /workspace -maxdepth 1 -type f -name "*.pkg" -print -quit)"
             '
 
-      - name: Disponibilizar PKG para download
+      - name: Disponibilizar pacote para download
         uses: actions/upload-artifact@v4
         with:
           name: VeltorGameHub-PS4-PKG
