@@ -12,30 +12,62 @@ permissions:
 
 jobs:
   build:
+    name: Compilar Veltor GameHub
     runs-on: ubuntu-latest
 
     steps:
       - name: Baixar arquivos do projeto
         uses: actions/checkout@v4
 
+      - name: Verificar arquivos do projeto
+        run: |
+          echo "=== Arquivos principais ==="
+          test -f Makefile || { echo "ERRO: Makefile ausente"; exit 1; }
+          test -f main.cpp || { echo "ERRO: main.cpp ausente"; exit 1; }
+          echo "Makefile e main.cpp encontrados."
+          echo "=== Arquivos do projeto ==="
+          find . -maxdepth 3 -type f -print | sort
 
-   
-    
-      - name: Preparar ferramenta OpenOrbis
+      - name: Inspecionar SDK OpenOrbis
+        run: |
+          docker run --rm \
+            openorbisofficial/toolchain:v0.5.1 \
+            bash -c '
+              set -eu
+              SDK=/lib/OpenOrbisSDK
+              echo "=== Caminho do SDK ==="
+              echo "$SDK"
+              test -d "$SDK/include"
+              test -f "$SDK/link.x"
+              echo "=== Ferramentas disponíveis ==="
+              find "$SDK/bin" -type f -print | sort
+              echo "=== Ferramentas de empacotamento ==="
+              find "$SDK" -type f \( \
+                -name "create-fself" -o \
+                -name "create-gp4" -o \
+                -name "PkgTool.Core" \
+              \) -print
+            '
+
+      - name: Compilar e gerar PKG
         run: |
           docker run --rm \
             --user "$(id -u):$(id -g)" \
+            -e OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             openorbisofficial/toolchain:v0.5.1 \
-            bash -c 'export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK; echo "SDK=$OO_PS4_TOOLCHAIN"; ls "$OO_PS4_TOOLCHAIN"; test -d "$OO_PS4_TOOLCHAIN/include" || exit 1; make'
-
-
-
-      - name: Verificar se o PKG foi gerado
-        run: |
-          find . -type f -name "*.pkg" -print
-          test -n "$(find . -type f -name '*.pkg' -print -quit)"
+            bash -c '
+              set -eu
+              export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
+              echo "=== Verificando ferramentas ==="
+              find "$OO_PS4_TOOLCHAIN/bin" -type f -print | sort
+              echo "=== Iniciando compilação ==="
+              make
+              echo "=== Procurando pacote PKG ==="
+              find /workspace -type f -name "*.pkg" -print
+              test -n "$(find /workspace -type f -name "*.pkg" -print -quit)"
+            '
 
       - name: Disponibilizar PKG para download
         uses: actions/upload-artifact@v4
@@ -43,3 +75,4 @@ jobs:
           name: VeltorGameHub-PS4-PKG
           path: "**/*.pkg"
           if-no-files-found: error
+          retention-days: 7
