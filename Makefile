@@ -8,18 +8,15 @@ TITLE       := Veltor GameHub
 TITLE_ID    := VLTG00001
 CONTENT_ID  := IV0000-VLTG00001_00-VELTORGAMEHUB0000
 
-# SDK
 SDK := /lib/OpenOrbisSDK
 BIN := $(SDK)/bin/linux
 
-# Ferramentas
 CXX          := clang++
 LD           := ld.lld
 CREATE_EBOOT := $(BIN)/create-eboot
 PKGTOOL      := $(BIN)/PkgTool.Core
 CREATE_GP4   := /tmp/create-gp4
 
-# Arquivos
 BUILD_DIR := x64/Debug
 OBJECT    := $(BUILD_DIR)/main.o
 ELF       := $(BUILD_DIR)/VeltorGameHub.elf
@@ -27,7 +24,6 @@ EBOOT     := eboot.bin
 GP4       := pkg.gp4
 PKG       := VeltorGameHub.pkg
 
-# Compilação
 CXXFLAGS := \
 	--target=x86_64-pc-freebsd12-elf \
 	-fPIC \
@@ -37,7 +33,8 @@ CXXFLAGS := \
 	-isystem $(SDK)/include \
 	-isystem $(SDK)/include/c++/v1
 
-# Linkedição
+# Mantém a configuração de linkedição atual para diagnóstico.
+# Não adiciona opções especulativas ao linker.
 LDFLAGS := \
 	-m elf_x86_64 \
 	-pie \
@@ -50,10 +47,6 @@ LIBS := -lc -lkernel -lc++
 .PHONY: all clean check-tools
 
 all: $(PKG)
-
-# ==================================================
-# VERIFICAÇÃO
-# ==================================================
 
 check-tools:
 	@echo "=== Verificando ferramentas ==="
@@ -69,36 +62,20 @@ check-tools:
 	@test -s sce_sys/param.sfo || { echo "ERRO: param.sfo ausente ou vazio"; exit 1; }
 	@echo "Todas as ferramentas e arquivos foram encontrados."
 
-# ==================================================
-# DIRETÓRIO
-# ==================================================
-
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
-
-# ==================================================
-# COMPILAÇÃO C++
-# ==================================================
 
 $(OBJECT): main.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-# ==================================================
-# ELF
-# ==================================================
-
-$(ELF): $(OBJECT) check-tools
+$(ELF): $(OBJECT) | check-tools
 	@echo "=== Gerando ELF ==="
 	$(LD) $(OBJECT) -o $(ELF) $(LDFLAGS) \
 		$(SDK)/lib/crt1.o \
 		$(LIBS)
 	@test -s "$(ELF)" || { echo "ERRO: ELF não foi gerado"; exit 1; }
-	@echo "ELF gerado:"
+	@echo "=== ELF gerado ==="
 	@ls -lh "$(ELF)"
-
-# ==================================================
-# EBOOT / FSELF
-# ==================================================
 
 $(EBOOT): $(ELF)
 	@echo "=== Gerando EBOOT / FSELF ==="
@@ -106,21 +83,13 @@ $(EBOOT): $(ELF)
 	@test -s "$(EBOOT)" || { echo "ERRO: eboot.bin não foi gerado"; exit 1; }
 	@echo "EBOOT gerado com sucesso."
 
-# ==================================================
-# GP4
-# ==================================================
-
-$(GP4): $(EBOOT) check-tools
+$(GP4): $(EBOOT) | check-tools
 	@echo "=== Gerando GP4 ==="
 	$(CREATE_GP4) -out=$(GP4) \
 		--content-id=$(CONTENT_ID) \
 		--files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png"
 	@test -s "$(GP4)" || { echo "ERRO: GP4 não foi gerado"; exit 1; }
 	@echo "GP4 gerado com sucesso."
-
-# ==================================================
-# PKG
-# ==================================================
 
 $(PKG): $(GP4)
 	@echo "=== Empacotando PKG ==="
@@ -131,10 +100,6 @@ $(PKG): $(GP4)
 	@echo "Arquivo: $(PKG)"
 	@ls -lh "$(PKG)"
 	@echo "=========================================="
-
-# ==================================================
-# LIMPEZA
-# ==================================================
 
 clean:
 	rm -rf $(BUILD_DIR) $(EBOOT) $(GP4) $(PKG)
