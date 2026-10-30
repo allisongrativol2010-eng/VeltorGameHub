@@ -35,6 +35,29 @@ jobs:
           test -f main.cpp
           test -s sce_sys/icon0.png
 
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          path = Path("sce_sys/icon0.png")
+          data = path.read_bytes()
+
+          if len(data) < 24:
+              raise SystemExit("ERRO: icon0.png é muito pequeno.")
+
+          if data[:8] != b"\x89PNG\r\n\x1a\n":
+              raise SystemExit("ERRO: icon0.png não é um PNG válido.")
+
+          width, height = struct.unpack(">II", data[16:24])
+
+          if (width, height) != (512, 512):
+              raise SystemExit(
+                  f"ERRO: icon0.png deve ser 512x512; recebido {width}x{height}."
+              )
+
+          print(f"Ícone PNG validado: {width}x{height}.")
+          PY
+
           echo "Projeto encontrado."
           echo "CONTENT_ID: $CONTENT_ID"
           echo "TITLE_ID: $TITLE_ID"
@@ -100,7 +123,11 @@ jobs:
               ))
 
           key_table_offset = 20 + 16 * len(records)
-          data_table_offset = key_table_offset + len(keys)
+
+          # A tabela de dados começa alinhada em 4 bytes.
+          data_table_offset = (
+              key_table_offset + len(keys) + 3
+          ) & ~3
 
           header = struct.pack(
               "<4sIIII",
@@ -116,7 +143,11 @@ jobs:
               for record in records
           )
 
-          output = header + index_table + keys + values
+          padding = b"\0" * (
+              data_table_offset - key_table_offset - len(keys)
+          )
+
+          output = header + index_table + keys + padding + values
 
           path = Path("sce_sys/param.sfo")
           path.write_bytes(output)
@@ -154,11 +185,16 @@ jobs:
           if version != 0x00000101:
               raise SystemExit("Versão PSF inesperada")
 
-          if 20 + count * 16 > len(data):
+          index_end = 20 + count * 16
+
+          if index_end > len(data):
               raise SystemExit("Tabela de índices inválida")
 
-          if key_off > len(data) or data_off > len(data):
-              raise SystemExit("Offset inválido")
+          if key_off < index_end or key_off > data_off:
+              raise SystemExit("Offset da tabela de chaves inválido")
+
+          if data_off > len(data) or data_off % 4 != 0:
+              raise SystemExit("Offset da tabela de dados inválido")
 
           found = {}
 
@@ -169,15 +205,18 @@ jobs:
                   struct.unpack_from("<HHIII", data, pos)
               )
 
+              if length > max_len:
+                  raise SystemExit("Comprimento maior que o máximo")
+
               key_start = key_off + key_idx
 
-              if key_start >= len(data):
+              if key_start < key_off or key_start >= data_off:
                   raise SystemExit("Índice de chave inválido")
 
-              key_end = data.find(b"\0", key_start)
+              key_end = data.find(b"\0", key_start, data_off)
 
-              if key_end < 0 or key_end >= data_off:
-                  raise SystemExit("Chave inválida")
+              if key_end < 0:
+                  raise SystemExit("Chave sem terminador NUL")
 
               key = data[key_start:key_end].decode("ascii")
 
@@ -237,7 +276,7 @@ jobs:
                   "Campos ausentes: " + ", ".join(sorted(missing))
               )
 
-          print("PARAM.SFO passou nas verificações.")
+          print("PARAM.SFO passou nas verificações estruturais.")
           PY
 
           file sce_sys/param.sfo \
