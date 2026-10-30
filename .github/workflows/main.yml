@@ -1,5 +1,5 @@
 
-name: Build Veltor GameHub PS4
+name: Veltor GameHub - PS4 Build
 
 on:
   push:
@@ -12,31 +12,48 @@ permissions:
 
 jobs:
   build:
-    name: Build Veltor GameHub
+    name: Build PS4 PKG
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # ==========================================
+      # 1. PREPARAÇÃO
+      # ==========================================
+
+      - name: Baixar repositório
         uses: actions/checkout@v4
 
-      - name: Verificar projeto
+      - name: Preparar ambiente
         shell: bash
         run: |
           set -euo pipefail
+
+          mkdir -p diagnostico
+          chmod 777 diagnostico
+
+          echo "=== Verificando arquivos ==="
 
           test -f Makefile
           test -f main.cpp
           test -s sce_sys/icon0.png
           test -s sce_sys/param.sfo
 
-          mkdir -p diagnostico
+          echo "Arquivos do projeto encontrados."
+
+      # ==========================================
+      # 2. CONFIGURAR GO
+      # ==========================================
 
       - name: Configurar Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
 
-      - name: Compilar create-gp4
+      # ==========================================
+      # 3. COMPILAR CREATE-GP4
+      # ==========================================
+
+      - name: Baixar e compilar create-gp4
         shell: bash
         run: |
           set -euo pipefail
@@ -45,48 +62,64 @@ jobs:
             https://github.com/OpenOrbis/create-gp4.git \
             /tmp/create-gp4-src
 
-          cd /tmp/create-gp4-src/cmd/create-gp4
+          cd /tmp/create-gp4-src
+
+          echo "=== Localizando módulo Go ==="
+          find . -maxdepth 3 -name go.mod -print
+
+          cd cmd/create-gp4
 
           GOOS=linux GOARCH=amd64 \
             go build -o /tmp/create-gp4 .
 
+          chmod +x /tmp/create-gp4
+
           test -x /tmp/create-gp4
 
-      - name: Baixar OpenOrbis
-        run: docker pull openorbisofficial/toolchain:v0.5.1
+          echo "create-gp4 compilado."
 
-      - name: Diagnosticar Toolchain
+      # ==========================================
+      # 4. OPENORBIS TOOLCHAIN
+      # ==========================================
+
+      - name: Baixar OpenOrbis Toolchain
+        run: |
+          docker pull openorbisofficial/toolchain:v0.5.1
+
+      # ==========================================
+      # 5. DIAGNÓSTICO DA TOOLCHAIN
+      # ==========================================
+
+      - name: Diagnosticar OpenOrbis
         shell: bash
         run: |
           set -euo pipefail
 
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
             openorbisofficial/toolchain:v0.5.1 \
             bash -c '
-              set -eu
+              echo "===== CLANG ====="
+              clang++ --version
 
-              {
-                echo "=== CLANG ==="
-                clang++ --version
+              echo "===== LLD ====="
+              ld.lld --version
 
-                echo "=== LLD ==="
-                ld.lld --version
+              echo "===== CREATE EBOOT ====="
+              ls -lh /lib/OpenOrbisSDK/bin/linux/create-eboot
 
-                echo "=== CREATE EBOOT ==="
-                ls -lh /lib/OpenOrbisSDK/bin/linux/create-eboot
+              echo "===== LINKER SCRIPT ====="
+              cat /lib/OpenOrbisSDK/link.x
 
-                echo "=== LINKER SCRIPT ==="
-                cat /lib/OpenOrbisSDK/link.x
+              echo "===== CRT1 ====="
+              ls -lh /lib/OpenOrbisSDK/lib/crt1.o
 
-                echo "=== CRT1 ==="
-                ls -lh /lib/OpenOrbisSDK/lib/crt1.o
+              echo "===== LIBKERNEL ====="
+              ls -lh /lib/OpenOrbisSDK/lib/libkernel*
+            ' 2>&1 | tee diagnostico/toolchain.txt
 
-                echo "=== BIBLIOTECAS ==="
-                ls -lh /lib/OpenOrbisSDK/lib/libkernel*
-              } > diagnostico/toolchain.txt 2>&1
-            '
+      # ==========================================
+      # 6. COMPILAR ELF
+      # ==========================================
 
       - name: Compilar ELF
         shell: bash
@@ -102,34 +135,37 @@ jobs:
             bash -c '
               set -eu
 
-              export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
-
+              echo "===== LIMPEZA ====="
               make clean
+
+              echo "===== COMPILAÇÃO ====="
               make x64/Debug/VeltorGameHub.elf
 
               ELF=x64/Debug/VeltorGameHub.elf
 
               test -s "$ELF"
 
-              readelf -h "$ELF" \
-                > diagnostico/elf-header.txt
-
-              readelf -l "$ELF" \
-                > diagnostico/elf-program-headers.txt
-
-              readelf -S "$ELF" \
-                > diagnostico/elf-sections.txt
-
-              readelf -d "$ELF" \
-                > diagnostico/elf-dynamic.txt || true
-
-              readelf -s "$ELF" \
-                > diagnostico/elf-symbols.txt
-
+              echo "===== ELF GERADO ====="
               ls -lh "$ELF"
-            '
 
-      - name: Gerar FSELF com log completo
+              echo "===== CABEÇALHO ====="
+              readelf -h "$ELF"
+
+              echo "===== SEGMENTOS ====="
+              readelf -l "$ELF"
+
+              echo "===== SEÇÕES ====="
+              readelf -S "$ELF"
+
+              echo "===== INFORMAÇÕES DINÂMICAS ====="
+              readelf -d "$ELF" || true
+            ' 2>&1 | tee diagnostico/compilacao-elf.txt
+
+      # ==========================================
+      # 7. CONVERTER ELF PARA FSELF
+      # ==========================================
+
+      - name: Gerar EBOOT FSELF
         shell: bash
         run: |
           set -euo pipefail
@@ -142,32 +178,40 @@ jobs:
             bash -c '
               set -eu
 
-              TOOL=/lib/OpenOrbisSDK/bin/linux/create-eboot
               ELF=x64/Debug/VeltorGameHub.elf
+              TOOL=/lib/OpenOrbisSDK/bin/linux/create-eboot
 
               test -s "$ELF"
+              test -x "$TOOL"
 
-              echo "=== Executando create-eboot ==="
+              echo "===== CONVERSÃO FSELF ====="
 
               set +e
-              "$TOOL" -in="$ELF" -out=eboot.bin \
-                > diagnostico/create-eboot.log 2>&1
+              "$TOOL" -in="$ELF" -out=eboot.bin
               RESULT=$?
               set -e
 
-              cat diagnostico/create-eboot.log
-              echo "$RESULT" > diagnostico/create-eboot-exit-code.txt
+              echo "Código de saída: $RESULT"
 
               if [ "$RESULT" -ne 0 ]; then
-                echo "Falha na conversão ELF para FSELF."
+                echo "ERRO: create-eboot falhou."
                 exit "$RESULT"
               fi
 
-              test -s eboot.bin
-              ls -lh eboot.bin
-            '
+              if [ ! -s eboot.bin ]; then
+                echo "ERRO: eboot.bin não foi criado."
+                exit 1
+              fi
 
-      - name: Gerar GP4 e PKG
+              echo "===== EBOOT GERADO ====="
+              ls -lh eboot.bin
+            ' 2>&1 | tee diagnostico/fself.txt
+
+      # ==========================================
+      # 8. GERAR GP4 E PKG
+      # ==========================================
+
+      - name: Gerar pacote PKG
         shell: bash
         run: |
           set -euo pipefail
@@ -181,24 +225,38 @@ jobs:
             bash -c '
               set -eu
 
-              export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
-
               test -s eboot.bin
+              test -s sce_sys/param.sfo
+              test -s sce_sys/icon0.png
 
+              echo "===== GERANDO GP4 ====="
               make pkg.gp4
+
+              echo "===== GERANDO PKG ====="
               make VeltorGameHub.pkg
 
               test -s VeltorGameHub.pkg
-            '
 
-      - name: Publicar diagnóstico
+              echo "===== PACOTE CONCLUÍDO ====="
+              ls -lh VeltorGameHub.pkg
+            ' 2>&1 | tee diagnostico/empacotamento.txt
+
+      # ==========================================
+      # 9. PUBLICAR DIAGNÓSTICOS
+      # ==========================================
+
+      - name: Publicar diagnósticos
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: VeltorGameHub-Diagnostico
+          name: VeltorGameHub-Diagnosticos
           path: diagnostico/
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
+
+      # ==========================================
+      # 10. PUBLICAR PKG
+      # ==========================================
 
       - name: Publicar PKG
         if: success()
@@ -207,4 +265,4 @@ jobs:
           name: VeltorGameHub-PS4-PKG
           path: VeltorGameHub.pkg
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
