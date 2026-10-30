@@ -12,59 +12,60 @@ permissions:
 
 jobs:
   build:
-    name: Compilar Veltor GameHub
+    name: Compilar VeltorGameHub
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar arquivos do projeto
+      - name: Baixar projeto
         uses: actions/checkout@v4
 
-      - name: Verificar arquivos do projeto
+      - name: Verificar arquivos
         run: |
-          echo "=== Arquivos principais ==="
-          test -f Makefile || { echo "ERRO: Makefile ausente"; exit 1; }
-          test -f main.cpp || { echo "ERRO: main.cpp ausente"; exit 1; }
-          echo "Makefile e main.cpp encontrados."
-          echo "=== Arquivos do projeto ==="
+          set -eu
+          test -f Makefile
+          test -f main.cpp
+          echo "Arquivos do projeto encontrados."
           find . -maxdepth 3 -type f -print | sort
 
-      - name: Inspecionar SDK OpenOrbis
+      - name: Preparar ferramentas OpenOrbis
         run: |
-          docker run --rm \
-            openorbisofficial/toolchain:v0.5.1 \
-            bash -c '
-              set -eu
-              SDK=/lib/OpenOrbisSDK
-              echo "=== Caminho do SDK ==="
-              echo "$SDK"
-              test -d "$SDK/include"
-              test -f "$SDK/link.x"
-              echo "=== Ferramentas disponíveis ==="
-              find "$SDK/bin" -type f -print | sort
-              echo "=== Ferramentas de empacotamento ==="
-              find "$SDK" -type f \( \
-                -name "create-fself" -o \
-                -name "create-gp4" -o \
-                -name "PkgTool.Core" \
-              \) -print
-            '
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y golang-go git
+
+          git clone --depth 1 \
+            https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain.git \
+            /tmp/openorbis-src
+
+          cd /tmp/openorbis-src/src/tools/create-gp4
+          GOOS=linux GOARCH=amd64 go build -o /tmp/create-gp4
+
+          test -x /tmp/create-gp4
+          /tmp/create-gp4 -h
 
       - name: Compilar e gerar PKG
         run: |
+          set -eu
+
           docker run --rm \
             --user "$(id -u):$(id -g)" \
-            -e OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK \
             -v "$GITHUB_WORKSPACE:/workspace" \
+            -v /tmp/create-gp4:/tmp/create-gp4:ro \
             -w /workspace \
             openorbisofficial/toolchain:v0.5.1 \
             bash -c '
               set -eu
               export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
+
               echo "=== Verificando ferramentas ==="
-              find "$OO_PS4_TOOLCHAIN/bin" -type f -print | sort
-              echo "=== Iniciando compilação ==="
+              test -x /lib/OpenOrbisSDK/bin/linux/create-eboot
+              test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
+              test -x /tmp/create-gp4
+
+              echo "=== Compilando projeto ==="
               make
-              echo "=== Procurando pacote PKG ==="
+
+              echo "=== Conferindo pacote ==="
               find /workspace -type f -name "*.pkg" -print
               test -n "$(find /workspace -type f -name "*.pkg" -print -quit)"
             '
@@ -73,6 +74,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: VeltorGameHub-PS4-PKG
-          path: "**/*.pkg"
+          path: "*.pkg"
           if-no-files-found: error
           retention-days: 7
