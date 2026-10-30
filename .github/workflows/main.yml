@@ -197,10 +197,20 @@ jobs:
           test -s pkg.gp4
           ls -lh pkg.gp4
 
+
       - name: Build PKG
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "===== VERIFICANDO GP4 ====="
+          test -s pkg.gp4
+
+          echo "===== PREPARANDO DIRETÓRIO ====="
+          rm -rf pkg-output
+          mkdir -p pkg-output
+
+          echo "===== GERANDO PKG ====="
 
           docker run --rm \
             --user "$(id -u):$(id -g)" \
@@ -212,14 +222,34 @@ jobs:
 
               PKGTOOL=/lib/OpenOrbisSDK/bin/linux/PkgTool.Core
 
+              test -x "$PKGTOOL"
               test -s pkg.gp4
 
-              "$PKGTOOL" --build pkg.gp4 VeltorGameHub.pkg
+              "$PKGTOOL" pkg_build pkg.gp4 pkg-output
 
-              test -s VeltorGameHub.pkg
-
-              ls -lh VeltorGameHub.pkg
+              echo "===== ARQUIVOS GERADOS ====="
+              find pkg-output -type f -print
             ' 2>&1 | tee diagnostico/pkg.txt
+
+          echo "===== LOCALIZANDO PKG ====="
+
+          mapfile -t PACKAGES < <(
+            find pkg-output -type f -iname '*.pkg'
+          )
+
+          if [ "${#PACKAGES[@]}" -ne 1 ]; then
+            echo "ERRO: esperado exatamente um arquivo PKG."
+            find pkg-output -maxdepth 4 -print
+            exit 1
+          fi
+
+          cp "${PACKAGES[0]}" VeltorGameHub.pkg
+
+          test -s VeltorGameHub.pkg
+
+          echo "===== PKG FINAL ====="
+          ls -lh VeltorGameHub.pkg
+
 
       - name: Upload diagnostics
         if: always()
