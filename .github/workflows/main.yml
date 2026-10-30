@@ -18,13 +18,17 @@ jobs:
       - name: Baixar arquivos do projeto
         uses: actions/checkout@v4
 
+
       - name: Preparar ferramenta OpenOrbis
         run: |
+          chmod -R a+rwX "$GITHUB_WORKSPACE"
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             openorbisofficial/toolchain:v0.5.1 \
             make
+
 
       - name: Verificar se o PKG foi gerado
         run: |
