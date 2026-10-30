@@ -20,15 +20,15 @@ jobs:
 
 
    
+    
       - name: Preparar ferramenta OpenOrbis
         run: |
           docker run --rm \
             --user "$(id -u):$(id -g)" \
-            -e OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             openorbisofficial/toolchain:v0.5.1 \
-            bash -lc 'test -d "$OO_PS4_TOOLCHAIN/include" && make'
+            bash -c 'export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK; echo "SDK=$OO_PS4_TOOLCHAIN"; ls "$OO_PS4_TOOLCHAIN"; test -d "$OO_PS4_TOOLCHAIN/include" || exit 1; make'
 
 
 
