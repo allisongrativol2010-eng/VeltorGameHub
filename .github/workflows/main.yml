@@ -1,5 +1,5 @@
 
-name: Build VeltorGameHub PS4 PKG
+name: Build Veltor GameHub PS4
 
 on:
   push:
@@ -12,46 +12,71 @@ permissions:
 
 jobs:
   build:
-    name: Compilar VeltorGameHub
+    name: Compilar Veltor GameHub
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar projeto
+      # 1. Baixar o projeto
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verificar arquivos
+      # 2. Conferir arquivos do projeto
+      - name: Verificar estrutura
+        shell: bash
         run: |
-          set -eu
-          test -f Makefile
-          test -f main.cpp
-          echo "Arquivos principais encontrados."
+          set -euo pipefail
+
+          echo "=== Estrutura do projeto ==="
           find . -maxdepth 3 -type f -print | sort
 
+          test -f Makefile
+          test -f main.cpp
+          test -s sce_sys/icon0.png
+          test -s sce_sys/param.sfo
+
+          echo "Arquivos obrigatórios encontrados."
+
+      # 3. Preparar Go
+      - name: Configurar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      # 4. Compilar create-gp4
       - name: Compilar create-gp4 oficial
+        shell: bash
         run: |
-          set -eu
-          sudo apt-get update
-          sudo apt-get install -y golang-go git
+          set -euo pipefail
 
           git clone --depth 1 \
             https://github.com/OpenOrbis/create-gp4.git \
             /tmp/create-gp4-src
 
           cd /tmp/create-gp4-src/cmd/create-gp4
-          GO111MODULE=auto GOOS=linux GOARCH=amd64 \
+
+          GOOS=linux GOARCH=amd64 \
             go build -o /tmp/create-gp4 .
 
           test -x /tmp/create-gp4
+
+          echo "create-gp4 compilado."
           /tmp/create-gp4 -h
 
-      - name: Compilar e gerar PKG
+      # 5. Baixar e preparar a imagem OpenOrbis
+      - name: Preparar OpenOrbis Toolchain
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
 
-          test -f sce_sys/icon0.png || {
-            echo "ERRO: falta sce_sys/icon0.png no projeto."
-            exit 1
-          }
+          docker pull openorbisofficial/toolchain:v0.5.1
+
+          echo "Imagem OpenOrbis preparada."
+
+      # 6. Compilar somente o ELF
+      - name: Compilar ELF
+        shell: bash
+        run: |
+          set -euo pipefail
 
           docker run --rm \
             --user "$(id -u):$(id -g)" \
@@ -61,25 +86,90 @@ jobs:
             openorbisofficial/toolchain:v0.5.1 \
             bash -c '
               set -eu
+
               export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
 
-              echo "=== Verificando ferramentas ==="
+              echo "=== Verificando SDK ==="
+
               test -x /lib/OpenOrbisSDK/bin/linux/create-eboot
               test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
               test -x /tmp/create-gp4
 
-              echo "=== Gerando pacote ==="
-              make
+              echo "=== Limpando build anterior ==="
+              make clean
 
-              echo "=== Conferindo arquivo PKG ==="
-              find /workspace -maxdepth 1 -type f -name "*.pkg" -print
-              test -n "$(find /workspace -maxdepth 1 -type f -name "*.pkg" -print -quit)"
+              echo "=== Compilando ELF ==="
+              make x64/Debug/VeltorGameHub.elf
+
+              test -s x64/Debug/VeltorGameHub.elf
+
+              echo "ELF criado."
+              ls -lh x64/Debug/VeltorGameHub.elf
             '
 
-      - name: Disponibilizar pacote para download
+      # 7. Inspecionar o ELF antes do FSELF
+      - name: Diagnosticar ELF
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ELF="x64/Debug/VeltorGameHub.elf"
+
+          test -s "$ELF"
+
+          echo "=== Cabeçalho ELF ==="
+          readelf -h "$ELF"
+
+          echo "=== Program Headers ==="
+          readelf -l "$ELF"
+
+          echo "=== Seções ELF ==="
+          readelf -S "$ELF"
+
+          echo "=== Tamanho do ELF ==="
+          ls -lh "$ELF"
+
+      # 8. Gerar EBOOT, GP4 e PKG
+      - name: Gerar pacote PS4
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v /tmp/create-gp4:/tmp/create-gp4:ro \
+            -w /workspace \
+            openorbisofficial/toolchain:v0.5.1 \
+            bash -c '
+              set -eu
+
+              export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
+
+              echo "=== Gerando EBOOT / FSELF ==="
+              make eboot.bin
+
+              test -s eboot.bin
+
+              echo "=== Gerando GP4 ==="
+              make pkg.gp4
+
+              test -s pkg.gp4
+
+              echo "=== Gerando PKG ==="
+              make VeltorGameHub.pkg
+
+              test -s VeltorGameHub.pkg
+
+              echo "=== BUILD CONCLUÍDO ==="
+              ls -lh VeltorGameHub.pkg
+            '
+
+      # 9. Disponibilizar o pacote
+      - name: Publicar artefato
         uses: actions/upload-artifact@v4
         with:
           name: VeltorGameHub-PS4-PKG
-          path: "*.pkg"
+          path: VeltorGameHub.pkg
           if-no-files-found: error
           retention-days: 7
