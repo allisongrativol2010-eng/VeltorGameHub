@@ -3,11 +3,9 @@ VERSION     := 1.00
 TITLE_ID    := VLTG00001
 CONTENT_ID  := IV0000-VLTG00001_00-VELTORGAMEHUB0000
 
-LIBS        := -lc -lkernel -lc++
-TOOLCHAIN   := $(OO_PS4_TOOLCHAIN)
-PROJDIR     := $(shell basename $(CURDIR))
-INTDIR      := $(PROJDIR)/x64/Debug
-CXXFILE     := $(PROJDIR)/main.cpp
+PROJDIR     := VeltorGameHub
+INTDIR      := x64/Debug
+CXXFILE     := main.cpp
 OBJ         := $(INTDIR)/main.o
 
 CXXFLAGS    := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
