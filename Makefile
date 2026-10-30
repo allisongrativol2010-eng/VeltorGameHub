@@ -1,7 +1,10 @@
+
 TITLE       := Veltor GameHub
 VERSION     := 1.00
 TITLE_ID    := VLTG00001
 CONTENT_ID  := IV0000-VLTG00001_00-VELTORGAMEHUB0000
+
+TOOLCHAIN   := /lib/OpenOrbisSDK
 
 PROJDIR     := VeltorGameHub
 INTDIR      := x64/Debug
