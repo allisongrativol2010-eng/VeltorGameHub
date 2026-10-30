@@ -19,18 +19,94 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate project
+      - name: Prepare and validate project metadata
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p diagnostico
+          mkdir -p diagnostico sce_sys
 
           test -f Makefile
           test -f main.cpp
           test -s sce_sys/icon0.png
-          test -s sce_sys/param.sfo
 
-          echo "Project files validated."
+          python3 <<'PY'
+          import struct
+          from pathlib import Path
+
+          content_id = "IV0000-VLTG00001_00-VELTORGAMEHUB000"
+          title_id = "VLTG00001"
+          title = "Veltor GameHub"
+
+          if len(content_id) != 36:
+              raise SystemExit(
+                  f"Content ID inválido: {len(content_id)} caracteres"
+              )
+
+          entries = [
+              ("APP_TYPE", 0x0404, struct.pack("<I", 1)),
+              ("APP_VER", 0x0204, b"01.00\0"),
+              ("ATTRIBUTE", 0x0404, struct.pack("<I", 0)),
+              ("CATEGORY", 0x0204, b"gd\0"),
+              ("CONTENT_ID", 0x0204, content_id.encode("ascii") + b"\0"),
+              ("FORMAT", 0x0404, struct.pack("<I", 0)),
+              ("PARENTAL_LEVEL", 0x0404, struct.pack("<I", 0)),
+              ("SYSTEM_VER", 0x0404, struct.pack("<I", 0x05000000)),
+              ("TITLE", 0x0204, title.encode("utf-8") + b"\0"),
+              ("TITLE_ID", 0x0204, title_id.encode("ascii") + b"\0"),
+              ("VERSION", 0x0204, b"01.00\0"),
+          ]
+
+          keys = bytearray()
+          data = bytearray()
+          rows = []
+
+          for key, fmt, value in entries:
+              key_index = len(keys)
+              keys.extend(key.encode("ascii") + b"\0")
+
+              while len(data) % 4:
+                  data.append(0)
+
+              data_index = len(data)
+              data.extend(value)
+
+              rows.append((
+                  key_index,
+                  fmt,
+                  len(value),
+                  len(value),
+                  data_index
+              ))
+
+          key_table_offset = 20 + 16 * len(rows)
+          data_table_offset = key_table_offset + len(keys)
+
+          header = struct.pack(
+              "<4sIIII",
+              b"\0PSF",
+              0x00000101,
+              key_table_offset,
+              data_table_offset,
+              len(rows)
+          )
+
+          index_table = b"".join(
+              struct.pack("<HHIII", *row) for row in rows
+          )
+
+          output = header + index_table + keys + data
+
+          Path("sce_sys/param.sfo").write_bytes(output)
+
+          if output[:4] != b"\0PSF":
+              raise SystemExit("PARAM.SFO inválido")
+
+          print(f"PARAM.SFO gerado: {len(output)} bytes")
+          print(f"CONTENT_ID: {content_id} ({len(content_id)} caracteres)")
+          PY
+
+          test -s sce_sys/param.sfo
+          file sce_sys/param.sfo | tee diagnostico/param-sfo.txt
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -59,7 +135,6 @@ jobs:
             -o /tmp/create-fself .
 
           chmod +x /tmp/create-fself
-
           file /tmp/create-fself \
             | tee "$GITHUB_WORKSPACE/diagnostico/create-fself.txt"
 
@@ -80,7 +155,6 @@ jobs:
             go build -o /tmp/create-gp4 .
 
           chmod +x /tmp/create-gp4
-
           file /tmp/create-gp4 \
             | tee "$GITHUB_WORKSPACE/diagnostico/create-gp4.txt"
 
@@ -109,13 +183,12 @@ jobs:
 
               test -f "$OO_PS4_TOOLCHAIN/link.x"
               test -f "$OO_PS4_TOOLCHAIN/lib/crt1.o"
-
               test -x "$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core"
-              test -x "$OO_PS4_TOOLCHAIN/bin/linux/create-eboot"
 
-              ls -lh "$OO_PS4_TOOLCHAIN/link.x"
-              ls -lh "$OO_PS4_TOOLCHAIN/lib/crt1.o"
-              ls -lh "$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core"
+              ls -lh \
+                "$OO_PS4_TOOLCHAIN/link.x" \
+                "$OO_PS4_TOOLCHAIN/lib/crt1.o" \
+                "$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core"
             ' 2>&1 | tee diagnostico/toolchain.txt
 
       - name: Compile PS4 ELF
@@ -140,12 +213,8 @@ jobs:
 
               test -s "$ELF"
 
-              echo "===== ELF HEADER ====="
               readelf -h "$ELF"
-
-              echo "===== ELF PROGRAM HEADERS ====="
               readelf -l "$ELF"
-
               ls -lh "$ELF"
             ' 2>&1 | tee diagnostico/compilacao-elf.txt
 
@@ -190,27 +259,22 @@ jobs:
 
           /tmp/create-gp4 \
             -out=pkg.gp4 \
-            --content-id=IV0000-VLTG00001_00-VELTORGAMEHUB0000 \
+            --content-id=IV0000-VLTG00001_00-VELTORGAMEHUB000 \
             --files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png" \
             2>&1 | tee diagnostico/gp4.txt
 
           test -s pkg.gp4
           ls -lh pkg.gp4
 
-
       - name: Build PKG
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "===== VERIFICANDO GP4 ====="
           test -s pkg.gp4
 
-          echo "===== PREPARANDO DIRETÓRIO ====="
           rm -rf pkg-output
           mkdir -p pkg-output
-
-          echo "===== GERANDO PKG ====="
 
           docker run --rm \
             --user "$(id -u):$(id -g)" \
@@ -223,22 +287,17 @@ jobs:
               PKGTOOL=/lib/OpenOrbisSDK/bin/linux/PkgTool.Core
 
               test -x "$PKGTOOL"
-              test -s pkg.gp4
-
               "$PKGTOOL" pkg_build pkg.gp4 pkg-output
 
-              echo "===== ARQUIVOS GERADOS ====="
               find pkg-output -type f -print
             ' 2>&1 | tee diagnostico/pkg.txt
-
-          echo "===== LOCALIZANDO PKG ====="
 
           mapfile -t PACKAGES < <(
             find pkg-output -type f -iname '*.pkg'
           )
 
           if [ "${#PACKAGES[@]}" -ne 1 ]; then
-            echo "ERRO: esperado exatamente um arquivo PKG."
+            echo "ERRO: esperado exatamente um PKG."
             find pkg-output -maxdepth 4 -print
             exit 1
           fi
@@ -246,10 +305,7 @@ jobs:
           cp "${PACKAGES[0]}" VeltorGameHub.pkg
 
           test -s VeltorGameHub.pkg
-
-          echo "===== PKG FINAL ====="
           ls -lh VeltorGameHub.pkg
-
 
       - name: Upload diagnostics
         if: always()
