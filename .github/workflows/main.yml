@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verificar projeto
+      - name: Verificar arquivos do projeto
         shell: bash
         run: |
           set -euo pipefail
@@ -29,8 +29,9 @@ jobs:
           test -s sce_sys/icon0.png
           test -s sce_sys/param.sfo
 
-          echo "=== Arquivos do projeto ==="
-          find . -maxdepth 3 -type f -print | sort
+          mkdir -p diagnostico
+
+          echo "Arquivos do projeto verificados."
 
       - name: Configurar Go
         uses: actions/setup-go@v5
@@ -52,12 +53,11 @@ jobs:
             go build -o /tmp/create-gp4 .
 
           test -x /tmp/create-gp4
-          echo "create-gp4 pronto."
 
       - name: Baixar OpenOrbis Toolchain
         run: docker pull openorbisofficial/toolchain:v0.5.1
 
-      - name: Compilar ELF e diagnosticar
+      - name: Compilar ELF, diagnosticar e gerar FSELF
         shell: bash
         run: |
           set -euo pipefail
@@ -69,122 +69,97 @@ jobs:
             -w /workspace \
             openorbisofficial/toolchain:v0.5.1 \
             bash -c '
-              set -eu
+              set -euo pipefail
 
-              export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
+              SDK=/lib/OpenOrbisSDK
+              ELF=x64/Debug/VeltorGameHub.elf
+              TOOL=$SDK/bin/linux/create-eboot
 
-              echo "=== Verificando SDK ==="
-              test -x /lib/OpenOrbisSDK/bin/linux/create-eboot
-              test -x /lib/OpenOrbisSDK/bin/linux/PkgTool.Core
+              mkdir -p diagnostico
+
+              echo "=== Verificando ferramentas ==="
+              test -x "$TOOL"
+              test -x "$SDK/bin/linux/PkgTool.Core"
               test -x /tmp/create-gp4
 
-              echo "=== Limpando build ==="
+              echo "=== Limpando build anterior ==="
               make clean
 
               echo "=== Compilando ELF ==="
-              make x64/Debug/VeltorGameHub.elf
+              make "$ELF"
 
-              ELF=x64/Debug/VeltorGameHub.elf
               test -s "$ELF"
 
-              echo "=== ELF gerado ==="
+              echo "=== Informações do ELF ==="
               ls -lh "$ELF"
 
+              echo "=== Cabeçalho ELF ==="
+              readelf -h "$ELF" \
+                | tee diagnostico/elf-header.txt
+
+              echo "=== Program Headers ==="
+              readelf -l "$ELF" \
+                | tee diagnostico/elf-program-headers.txt
+
               echo "=== Seções ELF ==="
-              if command -v readelf >/dev/null 2>&1; then
-                readelf -S "$ELF"
-              elif command -v llvm-readelf >/dev/null 2>&1; then
-                llvm-readelf -S "$ELF"
-              else
-                echo "readelf não disponível dentro do container."
+              readelf -S "$ELF" \
+                | tee diagnostico/elf-sections.txt
+
+              echo "=== Símbolos GOT/PLT ==="
+              readelf -S "$ELF" \
+                | grep -Ei "got|plt" \
+                | tee diagnostico/elf-got-plt.txt || true
+
+              echo "=== Informações do create-eboot ==="
+              "$TOOL" --help \
+                > diagnostico/create-eboot-help.txt 2>&1 || true
+
+              echo "=== Gerando FSELF ==="
+
+              set +e
+              "$TOOL" -in="$ELF" -out=eboot.bin \
+                > diagnostico/create-eboot.log 2>&1
+              FSELF_STATUS=$?
+              set -e
+
+              cat diagnostico/create-eboot.log
+
+              echo "$FSELF_STATUS" \
+                > diagnostico/create-eboot-exit-code.txt
+
+              if [ "$FSELF_STATUS" -ne 0 ]; then
+                echo "ERRO: create-eboot falhou."
+                exit "$FSELF_STATUS"
               fi
-
-              echo "=== Verificando GOT.PL T ==="
-              if command -v readelf >/dev/null 2>&1; then
-                readelf -S "$ELF" | grep -E "got|plt" || true
-              fi
-            '
-
-      - name: Inspecionar ELF no runner
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ELF="x64/Debug/VeltorGameHub.elf"
-
-          test -s "$ELF"
-
-          echo "=== Cabeçalho ==="
-          readelf -h "$ELF"
-
-          echo "=== Program Headers ==="
-          readelf -l "$ELF"
-
-          echo "=== Seções GOT e PLT ==="
-          readelf -S "$ELF" | grep -E "got|plt" || true
-
-      - name: Gerar EBOOT FSELF
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            openorbisofficial/toolchain:v0.5.1 \
-            bash -c '
-              set -eu
-
-              TOOL=/lib/OpenOrbisSDK/bin/linux/create-eboot
-              ELF=x64/Debug/VeltorGameHub.elf
-
-              test -s "$ELF"
-
-              echo "=== Gerando FSELF diretamente ==="
-              "$TOOL" -in="$ELF" -out=eboot.bin
 
               test -s eboot.bin
 
-              echo "EBOOT gerado:"
+              echo "=== FSELF gerado ==="
               ls -lh eboot.bin
-            '
-
-      - name: Gerar GP4 e PKG
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -v /tmp/create-gp4:/tmp/create-gp4:ro \
-            -w /workspace \
-            openorbisofficial/toolchain:v0.5.1 \
-            bash -c '
-              set -eu
-
-              export OO_PS4_TOOLCHAIN=/lib/OpenOrbisSDK
-
-              test -s eboot.bin
-              test -s sce_sys/param.sfo
-              test -s sce_sys/icon0.png
 
               echo "=== Gerando GP4 ==="
               make pkg.gp4
-
               test -s pkg.gp4
 
               echo "=== Gerando PKG ==="
               make VeltorGameHub.pkg
-
               test -s VeltorGameHub.pkg
 
-              echo "=== PKG GERADO ==="
+              echo "=== BUILD CONCLUÍDO ==="
               ls -lh VeltorGameHub.pkg
             '
 
+      - name: Publicar diagnóstico do ELF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VeltorGameHub-Diagnostico
+          path: diagnostico/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Publicar PKG
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: VeltorGameHub-PS4-PKG
