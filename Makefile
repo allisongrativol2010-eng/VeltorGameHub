@@ -1,32 +1,31 @@
 
 # ==================================================
-# VELTOR GAME HUB — PS4 HOMEBREW
-# OpenOrbis Toolchain
+# VELTOR GAME HUB - PS4 HOMEBREW
+# OpenOrbis SDK v0.5.1
 # ==================================================
 
 TITLE       := Veltor GameHub
-VERSION     := 1.00
 TITLE_ID    := VLTG00001
 CONTENT_ID  := IV0000-VLTG00001_00-VELTORGAMEHUB0000
 
 # SDK
-SDK         := /lib/OpenOrbisSDK
-BIN         := $(SDK)/bin/linux
+SDK := /lib/OpenOrbisSDK
+BIN := $(SDK)/bin/linux
 
 # Ferramentas
-CXX         := clang++
-LD          := ld.lld
+CXX          := clang++
+LD           := ld.lld
 CREATE_EBOOT := $(BIN)/create-eboot
 PKGTOOL      := $(BIN)/PkgTool.Core
 CREATE_GP4   := /tmp/create-gp4
 
 # Arquivos
-BUILD_DIR   := x64/Debug
-OBJECT      := $(BUILD_DIR)/main.o
-ELF         := $(BUILD_DIR)/VeltorGameHub.elf
-EBOOT       := eboot.bin
-GP4         := pkg.gp4
-PKG         := VeltorGameHub.pkg
+BUILD_DIR := x64/Debug
+OBJECT    := $(BUILD_DIR)/main.o
+ELF       := $(BUILD_DIR)/VeltorGameHub.elf
+EBOOT     := eboot.bin
+GP4       := pkg.gp4
+PKG       := VeltorGameHub.pkg
 
 # Compilação
 CXXFLAGS := \
@@ -48,64 +47,61 @@ LDFLAGS := \
 
 LIBS := -lc -lkernel -lc++
 
-# ==================================================
-# ALVO PRINCIPAL
-# ==================================================
-
 .PHONY: all clean check-tools
 
 all: $(PKG)
 
 # ==================================================
-# VERIFICAÇÃO DAS FERRAMENTAS
+# VERIFICAÇÃO
 # ==================================================
 
 check-tools:
 	@echo "=== Verificando ferramentas ==="
-	@command -v $(CXX) >/dev/null 2>&1 || { echo "ERRO: clang++ não encontrado no PATH"; exit 1; }
-	@command -v $(LD) >/dev/null 2>&1 || { echo "ERRO: ld.lld não encontrado no PATH"; exit 1; }
+	@command -v $(CXX) >/dev/null 2>&1 || { echo "ERRO: clang++ não encontrado"; exit 1; }
+	@command -v $(LD) >/dev/null 2>&1 || { echo "ERRO: ld.lld não encontrado"; exit 1; }
 	@test -x "$(CREATE_EBOOT)" || { echo "ERRO: create-eboot não encontrado"; exit 1; }
 	@test -x "$(PKGTOOL)" || { echo "ERRO: PkgTool.Core não encontrado"; exit 1; }
-	@test -x "$(CREATE_GP4)" || { echo "ERRO: create-gp4 não encontrado em /tmp/create-gp4"; exit 1; }
+	@test -x "$(CREATE_GP4)" || { echo "ERRO: create-gp4 não encontrado"; exit 1; }
 	@test -f "$(SDK)/lib/crt1.o" || { echo "ERRO: crt1.o não encontrado"; exit 1; }
 	@test -f "$(SDK)/link.x" || { echo "ERRO: link.x não encontrado"; exit 1; }
 	@test -f main.cpp || { echo "ERRO: main.cpp não encontrado"; exit 1; }
-	@test -f sce_sys/icon0.png || { echo "ERRO: sce_sys/icon0.png não encontrado"; exit 1; }
-	@test -f sce_sys/param.sfo || { echo "ERRO: sce_sys/param.sfo não encontrado"; exit 1; }
-	@echo "Todas as ferramentas foram encontradas."
+	@test -s sce_sys/icon0.png || { echo "ERRO: icon0.png ausente ou vazio"; exit 1; }
+	@test -s sce_sys/param.sfo || { echo "ERRO: param.sfo ausente ou vazio"; exit 1; }
+	@echo "Todas as ferramentas e arquivos foram encontrados."
 
 # ==================================================
-# DIRETÓRIO DE BUILD
+# DIRETÓRIO
 # ==================================================
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # ==================================================
-# COMPILAÇÃO DO C++
+# COMPILAÇÃO C++
 # ==================================================
 
 $(OBJECT): main.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 # ==================================================
-# GERAÇÃO DO ELF
+# ELF
 # ==================================================
 
 $(ELF): $(OBJECT) check-tools
+	@echo "=== Gerando ELF ==="
 	$(LD) $(OBJECT) -o $(ELF) $(LDFLAGS) \
 		$(SDK)/lib/crt1.o \
 		$(LIBS)
-	@echo "=== ELF gerado ==="
-	@file "$(ELF)"
+	@test -s "$(ELF)" || { echo "ERRO: ELF não foi gerado"; exit 1; }
+	@echo "ELF gerado:"
 	@ls -lh "$(ELF)"
 
 # ==================================================
-# GERAÇÃO DO EBOOT / FSELF
+# EBOOT / FSELF
 # ==================================================
 
 $(EBOOT): $(ELF)
-	@echo "=== Gerando FSELF ==="
+	@echo "=== Gerando EBOOT / FSELF ==="
 	$(CREATE_EBOOT) -in=$(ELF) -out=$(EBOOT)
 	@test -s "$(EBOOT)" || { echo "ERRO: eboot.bin não foi gerado"; exit 1; }
 	@echo "EBOOT gerado com sucesso."
@@ -114,19 +110,20 @@ $(EBOOT): $(ELF)
 # GP4
 # ==================================================
 
-$(GP4): $(EBOOT)
+$(GP4): $(EBOOT) check-tools
 	@echo "=== Gerando GP4 ==="
 	$(CREATE_GP4) -out=$(GP4) \
 		--content-id=$(CONTENT_ID) \
 		--files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png"
-	@test -s "$(GP4)" || { echo "ERRO: arquivo GP4 não foi gerado"; exit 1; }
+	@test -s "$(GP4)" || { echo "ERRO: GP4 não foi gerado"; exit 1; }
+	@echo "GP4 gerado com sucesso."
 
 # ==================================================
-# PACOTE PKG
+# PKG
 # ==================================================
 
 $(PKG): $(GP4)
-	@echo "=== Gerando PKG ==="
+	@echo "=== Empacotando PKG ==="
 	$(PKGTOOL) --build $(GP4) $(PKG)
 	@test -s "$(PKG)" || { echo "ERRO: PKG não foi gerado"; exit 1; }
 	@echo "=========================================="
