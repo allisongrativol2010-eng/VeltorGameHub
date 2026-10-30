@@ -15,31 +15,52 @@ jobs:
     name: Build Veltor GameHub PKG
     runs-on: ubuntu-22.04
 
+    env:
+      CONTENT_ID: IV0000-VLTG00001_00-VELTORGAMEHUB000
+      TITLE_ID: VLTG00001
+      APP_TITLE: Veltor GameHub
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare and validate project metadata
+      - name: Prepare project
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p diagnostico sce_sys
 
           test -f Makefile
           test -f main.cpp
           test -s sce_sys/icon0.png
 
+          echo "Projeto encontrado."
+          echo "CONTENT_ID: $CONTENT_ID"
+          echo "TITLE_ID: $TITLE_ID"
+
+      - name: Generate PARAM.SFO
+        shell: bash
+        run: |
+          set -euo pipefail
+
           python3 <<'PY'
+          import os
           import struct
           from pathlib import Path
 
-          content_id = "IV0000-VLTG00001_00-VELTORGAMEHUB000"
-          title_id = "VLTG00001"
-          title = "Veltor GameHub"
+          content_id = os.environ["CONTENT_ID"]
+          title_id = os.environ["TITLE_ID"]
+          title = os.environ["APP_TITLE"]
 
           if len(content_id) != 36:
               raise SystemExit(
-                  f"Content ID inválido: {len(content_id)} caracteres"
+                  f"CONTENT_ID inválido: {len(content_id)} caracteres"
+              )
+
+          if len(title_id) != 9:
+              raise SystemExit(
+                  f"TITLE_ID inválido: {len(title_id)} caracteres"
               )
 
           entries = [
@@ -57,28 +78,28 @@ jobs:
           ]
 
           keys = bytearray()
-          data = bytearray()
-          rows = []
+          values = bytearray()
+          records = []
 
           for key, fmt, value in entries:
-              key_index = len(keys)
+              key_offset = len(keys)
               keys.extend(key.encode("ascii") + b"\0")
 
-              while len(data) % 4:
-                  data.append(0)
+              while len(values) % 4:
+                  values.append(0)
 
-              data_index = len(data)
-              data.extend(value)
+              value_offset = len(values)
+              values.extend(value)
 
-              rows.append((
-                  key_index,
+              records.append((
+                  key_offset,
                   fmt,
                   len(value),
                   len(value),
-                  data_index
+                  value_offset
               ))
 
-          key_table_offset = 20 + 16 * len(rows)
+          key_table_offset = 20 + 16 * len(records)
           data_table_offset = key_table_offset + len(keys)
 
           header = struct.pack(
@@ -87,26 +108,140 @@ jobs:
               0x00000101,
               key_table_offset,
               data_table_offset,
-              len(rows)
+              len(records)
           )
 
           index_table = b"".join(
-              struct.pack("<HHIII", *row) for row in rows
+              struct.pack("<HHIII", *record)
+              for record in records
           )
 
-          output = header + index_table + keys + data
+          output = header + index_table + keys + values
 
-          Path("sce_sys/param.sfo").write_bytes(output)
+          path = Path("sce_sys/param.sfo")
+          path.write_bytes(output)
 
-          if output[:4] != b"\0PSF":
-              raise SystemExit("PARAM.SFO inválido")
-
-          print(f"PARAM.SFO gerado: {len(output)} bytes")
-          print(f"CONTENT_ID: {content_id} ({len(content_id)} caracteres)")
+          print(f"PARAM.SFO criado: {path}")
+          print(f"Tamanho: {len(output)} bytes")
+          print(f"CONTENT_ID: {content_id}")
+          print(f"TITLE_ID: {title_id}")
           PY
 
           test -s sce_sys/param.sfo
-          file sce_sys/param.sfo | tee diagnostico/param-sfo.txt
+
+      - name: Validate PARAM.SFO
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import os
+          import struct
+          from pathlib import Path
+
+          data = Path("sce_sys/param.sfo").read_bytes()
+
+          if len(data) < 20:
+              raise SystemExit("PARAM.SFO muito pequeno")
+
+          if data[:4] != b"\0PSF":
+              raise SystemExit("Assinatura PSF inválida")
+
+          version, key_off, data_off, count = struct.unpack_from(
+              "<IIII", data, 4
+          )
+
+          if version != 0x00000101:
+              raise SystemExit("Versão PSF inesperada")
+
+          if 20 + count * 16 > len(data):
+              raise SystemExit("Tabela de índices inválida")
+
+          if key_off > len(data) or data_off > len(data):
+              raise SystemExit("Offset inválido")
+
+          found = {}
+
+          for i in range(count):
+              pos = 20 + i * 16
+
+              key_idx, fmt, length, max_len, data_idx = (
+                  struct.unpack_from("<HHIII", data, pos)
+              )
+
+              key_start = key_off + key_idx
+
+              if key_start >= len(data):
+                  raise SystemExit("Índice de chave inválido")
+
+              key_end = data.find(b"\0", key_start)
+
+              if key_end < 0 or key_end >= data_off:
+                  raise SystemExit("Chave inválida")
+
+              key = data[key_start:key_end].decode("ascii")
+
+              value_start = data_off + data_idx
+              value_end = value_start + length
+
+              if value_start < data_off or value_end > len(data):
+                  raise SystemExit(f"Valor inválido: {key}")
+
+              raw = data[value_start:value_end]
+
+              if fmt == 0x0204:
+                  value = raw.rstrip(b"\0").decode(
+                      "utf-8", errors="strict"
+                  )
+              elif fmt == 0x0404:
+                  if len(raw) != 4:
+                      raise SystemExit(f"Campo inteiro inválido: {key}")
+                  value = struct.unpack("<I", raw)[0]
+              else:
+                  value = raw
+
+              found[key] = value
+              print(f"{key}: {value}")
+
+          expected = {
+              "CONTENT_ID": os.environ["CONTENT_ID"],
+              "TITLE_ID": os.environ["TITLE_ID"],
+              "TITLE": os.environ["APP_TITLE"],
+          }
+
+          for key, expected_value in expected.items():
+              if found.get(key) != expected_value:
+                  raise SystemExit(
+                      f"ERRO: {key} esperado {expected_value!r}, "
+                      f"recebido {found.get(key)!r}"
+                  )
+
+          required = {
+              "APP_TYPE",
+              "APP_VER",
+              "ATTRIBUTE",
+              "CATEGORY",
+              "CONTENT_ID",
+              "FORMAT",
+              "PARENTAL_LEVEL",
+              "SYSTEM_VER",
+              "TITLE",
+              "TITLE_ID",
+              "VERSION",
+          }
+
+          missing = required - found.keys()
+
+          if missing:
+              raise SystemExit(
+                  "Campos ausentes: " + ", ".join(sorted(missing))
+              )
+
+          print("PARAM.SFO passou nas verificações.")
+          PY
+
+          file sce_sys/param.sfo \
+            | tee diagnostico/param-sfo.txt
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -135,10 +270,9 @@ jobs:
             -o /tmp/create-fself .
 
           chmod +x /tmp/create-fself
+
           file /tmp/create-fself \
             | tee "$GITHUB_WORKSPACE/diagnostico/create-fself.txt"
-
-          test -x /tmp/create-fself
 
       - name: Build create-gp4
         shell: bash
@@ -155,10 +289,9 @@ jobs:
             go build -o /tmp/create-gp4 .
 
           chmod +x /tmp/create-gp4
+
           file /tmp/create-gp4 \
             | tee "$GITHUB_WORKSPACE/diagnostico/create-gp4.txt"
-
-          test -x /tmp/create-gp4
 
       - name: Pull OpenOrbis SDK
         shell: bash
@@ -259,11 +392,12 @@ jobs:
 
           /tmp/create-gp4 \
             -out=pkg.gp4 \
-            --content-id=IV0000-VLTG00001_00-VELTORGAMEHUB000 \
+            --content-id="$CONTENT_ID" \
             --files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png" \
             2>&1 | tee diagnostico/gp4.txt
 
           test -s pkg.gp4
+
           ls -lh pkg.gp4
 
       - name: Build PKG
@@ -287,6 +421,7 @@ jobs:
               PKGTOOL=/lib/OpenOrbisSDK/bin/linux/PkgTool.Core
 
               test -x "$PKGTOOL"
+
               "$PKGTOOL" pkg_build pkg.gp4 pkg-output
 
               find pkg-output -type f -print
