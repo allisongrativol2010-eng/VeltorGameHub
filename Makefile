@@ -4,22 +4,25 @@ VERSION     := 1.00
 TITLE_ID    := VLTG00001
 CONTENT_ID  := IV0000-VLTG00001_00-VELTORGAMEHUB0000
 
-TOOLCHAIN   := /lib/OpenOrbisSDK
+LIBS        := -lc -lkernel -lc++
 
+TOOLCHAIN   := /lib/OpenOrbisSDK
 PROJDIR     := VeltorGameHub
 INTDIR      := x64/Debug
 CXXFILE     := main.cpp
 OBJ         := $(INTDIR)/main.o
 
-CXXFLAGS    := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include
+CXXFLAGS    := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include -isystem $(TOOLCHAIN)/include/c++/v1
 LDFLAGS     := -m elf_x86_64 -pie --script $(TOOLCHAIN)/link.x --eh-frame-hdr -L$(TOOLCHAIN)/lib $(LIBS) $(TOOLCHAIN)/lib/crt1.o
 
 UNAME_S     := $(shell uname -s)
+
 ifeq ($(UNAME_S),Linux)
   CXX       := clang++
   LD        := ld.lld
   CDIR      := linux
 endif
+
 ifeq ($(UNAME_S),Darwin)
   CXX       := /usr/local/opt/llvm/bin/clang++
   LD        := /usr/local/opt/llvm/bin/ld.lld
@@ -27,13 +30,14 @@ ifeq ($(UNAME_S),Darwin)
 endif
 
 .PHONY: all clean
+
 all: $(CONTENT_ID).pkg
 
 $(INTDIR):
 	mkdir -p $(INTDIR)
 
 $(OBJ): $(CXXFILE) | $(INTDIR)
-	$(CXX) $(CXXFLAGS) -isystem $(TOOLCHAIN)/include/c++/v1 -o $@ $<
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
 eboot.bin: $(OBJ)
 	$(LD) $(OBJ) -o $(INTDIR)/$(PROJDIR).elf $(LDFLAGS)
@@ -54,7 +58,7 @@ sce_sys/param.sfo: Makefile
 	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_setentry $@ VERSION --type Utf8 --maxsize 8 --value '$(VERSION)'
 
 pkg.gp4: eboot.bin sce_sys/param.sfo sce_sys/icon0.png
-	$(TOOLCHAIN)/bin/$(CDIR)/create-gp4 -out $@ --content-id=$(CONTENT_ID) --files $^
+	$(TOOLCHAIN)/bin/$(CDIR)/create-gp4 -out $@ --content-id=$(CONTENT_ID) --files "$^"
 
 $(CONTENT_ID).pkg: pkg.gp4
 	$(TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core pkg_build $< .
